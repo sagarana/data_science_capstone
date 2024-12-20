@@ -1,0 +1,53 @@
+---
+title: "Text prediction app"
+subtitle: "Capstone project for Data Science Speciliazation"
+text: "slides available" 
+output: ioslides_presentation
+date: "2024-12"
+---
+
+## About the app  {data-background=#DFFFE5}
+
+The [Text predition app](https://sagarana.shinyapps.io/predictive_text_app/) is a lightweight tool that improves text input efficiency by anticipating the next word. When predictions are correct users can select words instead of typing them. 
+
+<center>
+<video id="video" src="pred_text_video.mp4" autoplay="true" width="90%" controls></video>
+</center>
+
+## How does it work? {data-background=#F5E6FA}
+
+Predictions are based on word sequences found in nearly half a million lines of sample text. The samples consist of English language blogs, news stories and twitter/X posts. Here's what the app does:
+
+1. isolates the <em>last two words</em> the user types
+2. finds the same combination of words in the sample text
+3. lists words that most often follow that combination
+
+To give users choice, the app lists the top seven words by frequency. 
+
+<span style="color:grey; font-size:0.7em; margin-top:1em; font-style:italic"><b>Note:</b> if there are fewer than seven matches for the last <em>two</em> words, the app uses the last word only to complete the list.</span>
+
+
+## Preparing the data {data-background=#FFF9CC}
+
+Social media posts can be full of spelling mistakes and profanity. To keep predictions clean and running smoothly I prepared the sample data before use:
+
+- removed spelling mistakes
+- removed profanity
+- split hyphenated words
+- converted everything to lowercase
+- removed most punctuation and all numerals
+- replaced common contractions with expanded versions<br> (`I'm` becomes `I` `am`)
+
+<span style="color:grey; font-size:0.7em; margin-top:1em; font-style:italic"><b>Note:</b> The rationale and code for data preparation can be found at <https://sagarana.github.io/data_science_capstone/capstone_data_preparation.html></span>
+
+## What next? {data-background=#E0F7FA}
+
+The Shiny app is intentionally simple to make it easier to incorporate into other interfaces. It showcases two ways to engage with the predictions (list and word cloud), though only one is likely to be used in any given context. Code for the Shiny app is available [here on GitHub](https://github.com/sagarana/data_science_capstone/tree/main/text_prediction_app).
+
+The app is a start, but potential improvements could make it even more useful:
+
+- ability to select word using `tab` and `enter` keys
+- predictions based on type of word (e.g. noun, pronoun, verb)
+- predictions refined based on first letter typed
+
+<span style="color:green; font-size:larger">Thanks for your engagement!</span>
