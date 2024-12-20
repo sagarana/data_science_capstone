@@ -1,0 +1,228 @@
+---
+title: 'Capstone project: data preparation'
+output: html_document
+date: "2024-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+This report briefly describes and provides code for the data preparation undertaken for the capstone project of the Johns Hopkins Data Science Specialization. The purpose is to briefly summarize the process and make the code available for others who might want to review or adapt the process.
+
+```{r echo=FALSE}
+# Load packages required for the project
+library(tibble)
+library(dplyr)
+library(stringr)
+library(tidytext)
+library(tidyr)
+library(tokenizers)
+library(hunspell)
+```
+
+## 1. Load the data
+The data used to build the predictive model consists of three files of English language text provided in the `en_US` directory of the [capstone dataset](https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip). They contain text samples from blogs, news stories, and tweets, respectively: 
+
+- `en_US.blogs.txt`
+- `en_US.news.txt`
+- `en_US.twitter.txt`
+
+The project is based on a 10% sample of the lines in all three files, here grouped into a single data_frame named `data_subset`
+```{r, warning=FALSE, echo=FALSE}
+data_subset <- data.frame(file=character(), text=character())
+
+for (i in c("en_US.blogs.txt", "en_US.news.txt", "en_US.twitter.txt")) {
+         file_tag <- str_extract(i, "US\\.([a-z]*)\\.", group=1)
+         data_subset <- add_row(data_subset, file=file_tag, 
+                                text=readLines(i)[c(TRUE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE)])
+}
+```
+
+## 2. Initial text cleaning
+Initial text cleaning splits hyphenated words, removes non-sentence-ending punctuation, removes extra spaces, and expands contractions like "I'm" and "don't" based on a named vector of contractions and their expanded forms (`contraction_vector`). I do not convert to lowercase because this will happen later as part of tokenization.
+```{r echo=FALSE}
+contraction_vector <- c(
+  "aren't" = "are not",
+  "can't" = "cannot",
+  "couldn't" = "could not",
+  "didn't" = "did not",
+  "doesn't" = "does not",
+  "don't" = "do not",
+  "hadn't" = "had not",
+  "hasn't" = "has not",
+  "haven't" = "have not",
+  "he'd" = "he would",
+  "he'll" = "he will",
+  "he's" = "he is",
+  "I'd" = "I would",
+  "I'll" = "I will",
+  "I'm" = "I am",
+  "I've" = "I have",
+  "isn't" = "is not",
+  "it'd" = "it would",
+  "it'll" = "it will",
+  "it's" = "it is",
+  "let's" = "let us",
+  "mightn't" = "might not",
+  "mustn't" = "must not",
+  "shan't" = "shall not",
+  "she'd" = "she would",
+  "she'll" = "she will",
+  "she's" = "she is",
+  "shouldn't" = "should not",
+  "that's" = "that is",
+  "there'd" = "there would",
+  "there's" = "there is",
+  "they'd" = "they would",
+  "they'll" = "they will",
+  "they're" = "they are",
+  "they've" = "they have",
+  "wasn't" = "was not",
+  "we'd" = "we would",
+  "we're" = "we are",
+  "we've" = "we have",
+  "weren't" = "were not",
+  "what'll" = "what will",
+  "what're" = "what are",
+  "what's" = "what is",
+  "what've" = "what have",
+  "where's" = "where is",
+  "who'd" = "who would",
+  "who'll" = "who will",
+  "who's" = "who is",
+  "won't" = "will not",
+  "wouldn't" = "would not",
+  "you'd" = "you would",
+  "you'll" = "you will",
+  "you're" = "you are",
+  "you've" = "you have"
+)
+```
+
+```{r}
+clean_text <- function(text) {
+  text <- str_replace_all(text, "-", " ") # split hyphenated words 
+  text <- str_replace_all(text, "’", "'") # make all apostrophes non-curly for contraction matching
+  text <- str_replace_all(text, "[^a-zA-Z0-9\\s\\.\\!\\?']", "") # remove most punctuation
+  text <- str_squish(text)                # remove extra spaces
+  text <- str_replace_all(text, contraction_vector) # expand contractions
+  return(text)
+}
+
+data_subset <- data_subset %>%
+        mutate(id = row_number()) %>%
+        relocate(id) %>%
+        mutate(text = clean_text(text))
+```
+
+The result is a partially cleaned data frame with a 10% sample of the three original text files (426,969 rows). For now, spelling errors and profanity are kept in the data: removing them at this early stage could change word sequence and result in some unlikely trigrams later. I will also leave stop words because they support the project purpose: selecting the desired word from a short list may be faster than typing, even for very short or common words.
+
+## 3. Create trigrams
+Trigrams, or strings of three consecutive words, will be the building block for the predictive model. It is important to split the text into sentences before creating trigrams so that the trigrams do not cross sentence boundaries, which could result in unlikely or grammatically incorrect trigrams.
+```{r}
+split_into_sentences <- function(text) {
+  tokenize_sentences(text) %>% unlist()
+}
+        
+sentence_data <- data_subset %>%
+  rowwise() %>%
+  mutate(sentences = list(split_into_sentences(text))) %>%
+  unnest(cols = c(sentences)) %>%
+  group_by(id) %>% # Group by 'id' to reset sentence numbering for each text
+  mutate(sentence_id = row_number()) %>% # Add a unique sentence identifier per row
+  ungroup() # Ungroup after assigning sentence IDs
+
+#Generate trigrams from `sentence_data$sentences` using the tidytext package, then group them
+trigrams <- sentence_data %>%
+  unnest_tokens(trigram, sentences, token = "ngrams", n = 3)
+
+trigram_counts <- trigrams %>%
+        count(trigram, sort=TRUE)
+```
+
+## 4. Final text cleaning
+Numbers, spelling mistakes, and profanity were initially left in the data so that trigrams reflect the word order of the original text. At this point we can flag and remove that unwanted content, because we don't want the app to suggest profanity or a mis-spelled word. The code below splits trigrams into individual words, then identifies numerical content, profanity and spelling errors. Trigrams are removed if they meet any of the following criteria:
+
+- any of the words contain a numeral
+- the final word is mis-spelled or not in the English dictionary
+- any of the words is a profanity
+
+I allow for spelling mistakes and non-dictionary content in the first two words of the trigram because they could be commonly used words that are still meaningful for prediction (e.g. proper names, foreign-language words, common abbreviations). Removing spelling mistakes from the last word ensures that predictions will always be English-language dictionary words. Profanity is removed completely, however, so that predictions are neither profane nor based on profanity. 
+
+```{r warning=FALSE, message = FALSE}
+# remove numbers
+cleaned_trigrams <- trigram_counts %>%
+        mutate(numbers = str_detect(trigram, "[0-9]")) %>%
+        filter(numbers == FALSE) %>%
+        select(!numbers)
+
+# remove spelling errors (from last word only)
+cleaned_trigrams <- cleaned_trigrams %>%
+        separate_wider_delim(trigram, " ", names = c("w1","w2","w3")) %>%
+        mutate(spell_3 = !hunspell_check(w3)) %>%
+        filter(spell_3 == FALSE) %>%
+        select(w1, w2, w3, n)
+
+# remove profanity
+profanity_list <- scan("fb_bad_words_list.txt", what = "character", sep = ",")
+cleaned_trigrams <- cleaned_trigrams %>%
+        mutate(prof_1 = w1 %in% profanity_list) %>%
+        mutate(prof_2 = w2 %in% profanity_list) %>%
+        mutate(prof_3 = w3 %in% profanity_list) %>%
+        filter(prof_1 == FALSE, prof_2 == FALSE, prof_3 == FALSE) %>%
+        select(w1, w2, w3, n)
+```
+
+The result is a list of nearly 5M lowercase trigrams that respect sentence structure and exclude mis-spelled words, profanity, and numerical content. This is the source data for the app. 
+
+Note: during model testing the trigram data was split into training (70%), validation (15%), and testing (15%) sets. Once a model was selected the app was based on the complete set of cleaned trigrams, as shown below. 
+
+## 4. The algorithm
+I chose to build predictive algorithm that calculates the probability of a third word based on the previous two words. Machine learning methods proved too resource-intensive, so I used the `cleaned_trigram` data frame as a lookup table and developed a function that returns the seven "third" words most associated with the first two. If there are fewer than seven "third" words in the sample data, the function completes the list using only the last input word.
+
+```{r}
+# Calculate probabilities
+trigram_probabilities <- cleaned_trigrams %>%
+  group_by(w1, w2) %>%
+  mutate(probability = n / sum(n)) %>%
+  ungroup()
+
+# Prediction function
+generate_predictions <- function(w1, w2) {
+        prediction <- trigram_probabilities %>%
+                filter(w1 == !!w1 & w2 == !!w2) %>%
+                arrange(desc(probability)) %>%
+                slice(1:7) %>%
+                select(w3, probability)
+        
+        row_count <- nrow(prediction)
+        
+        # If fewer than 7 trigram matches, match on bigrams (last word only)
+        if (row_count < 7) {
+                fallback_prediction <- trigram_probabilities %>%
+                        filter(w2 == !!w2) %>%
+                        anti_join(prediction, by = "w3") %>% # remove possible duplicates already in `prediction`
+                        select(-w1) %>%
+                        group_by(w3) %>%
+                        summarise(probability = sum(probability*.1)) %>% # weight bigrams less than trigrams if/when joined
+                        arrange(desc(probability)) %>%
+                        slice(1:(7-row_count)) %>%
+                        select(w3, probability)
+                
+                # Join trigram and bigram matches
+                filled_prediction <- rbind(prediction,fallback_prediction) %>%
+                        group_by(w3)
+                
+                # If no trigram or bigram matches, return empty data frame
+                if (nrow(filled_prediction) == 0) {
+                        return(as.list(""))
+                }
+                
+                return(as.list(filled_prediction$w3))
+        }
+        
+        return(as.list(prediction$w3))
+}
+```
